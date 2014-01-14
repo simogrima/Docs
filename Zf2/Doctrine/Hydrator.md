@@ -1,6 +1,6 @@
 ##Hydrator
 
-Traduzione del seguente articolo [https://github.com/doctrine/DoctrineModule/edit/master/docs/hydrator.md](https://github.com/doctrine/DoctrineModule/edit/master/docs/hydrator.md)
+Traduzione del seguente articolo [https://github.com/doctrine/DoctrineModule/edit/master/docs/hydrator.md](https://github.com/doctrine/DoctrineModule/blob/master/docs/hydrator.md)
 
 Gli hydrators sono semplici oggetti che permettono di convertire una matrice di dati in un oggetto 
 ("hydrating") e di riconvertire un oggetto in un array ("extracting").
