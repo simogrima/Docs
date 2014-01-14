@@ -429,3 +429,133 @@ class Tag
     }
 }
 ```
+
+Da notare che abbiamo definito due funzioni: addTags e removeTags. Queste devono essere sempre definite e vengono chiamate automaticamente dall'hydrator di Doctrine quando si tratta di collezioni.
+S potrebbe pensare che questo sia eccessivo, e chiedersi perché non si possa semplicemente definire una funzione `setTags` per sostituire la vecchia collezione dalla nuova:
+
+```php
+public function setTags(Collection $tags)
+{
+	$this->tags = $tags;
+}
+```
+
+Ma questo sarebbe sbagliato, perché le collezioni Doctrine non devono essere scambiate, soprattutto perché le collezioni sono gestite da
+un ObjectManager, quindi non devono essere sostituite da una nuova istanza.
+
+Ancora una volta, possono verificarsi due casi: tags già esistenti o no.
+
+#####Entità esistente nell'associazione
+
+Quando esiste già un'entità nell'associazione, quello che dobbiamo fare è semplicemente dare gli identificatori delle entità:
+
+```php
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+
+$hydrator = new DoctrineHydrator($entityManager);
+$blogPost = new BlogPost();
+$data = array(
+	'title' => 'The best blog post in the world !',
+	'tags'  => array(
+		array('id' => 3), // add tag whose id is 3
+		array('id' => 8)  // also add tag whose id is 8
+	)
+);
+
+$blogPost = $hydrator->hydrate($data, $blogPost);
+
+echo $blogPost->getTitle(); // prints "The best blog post in the world !"
+echo count($blogPost->getTags()); // prints 2
+```
+
+**NOTE** : ancora una volta, questo:
+
+```php
+$data = array(
+	'title' => 'The best blog post in the world !',
+	'tags'  => array(
+		array('id' => 3), // add tag whose id is 3
+		array('id' => 8)  // also add tag whose id is 8
+	)
+);
+```
+
+può essere scritto:
+
+```php
+$data = array(
+	'title' => 'The best blog post in the world !',
+	'tags'  => array(3, 8)
+);
+```
+
+#####Entità non esistente nell'associazione
+
+Se entità dell'associazione non esiste, c'è solo bisogno di dare l'oggetto dato:
+
+```php
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+
+$hydrator = new DoctrineHydrator($entityManager);
+$blogPost = new BlogPost();
+
+$tags = array();
+
+$tag1 = new Tag();
+$tag1->setName('PHP');
+$tags[] = $tag1;
+
+$tag2 = new Tag();
+$tag2->setName('STL');
+$tags[] = $tag2;
+
+$data = array(
+	'title' => 'The best blog post in the world !',
+	'tags'  => $tags // Note that you can mix integers and entities without any problem
+);
+
+$blogPost = $hydrator->hydrate($data, $blogPost);
+
+echo $blogPost->getTitle(); // prints "The best blog post in the world !"
+echo count($blogPost->getTags()); // prints 2
+```
+
+Per ottenere questo, è necessario modificare leggermente la mappatura, in modo che Doctrine possa persistere nuove entità sulle
+associazioni (notare l'opzione cascade sulla associazione OneToMany):
+
+```php
+
+namespace Application\Entity;
+
+use Doctrine\ORM\Mapping as ORM;
+
+/**
+ * @ORM\Entity
+ */
+class BlogPost
+{
+	/** .. */
+
+    /**
+     * @ORM\OneToMany(targetEntity="Application\Entity\Tag", mappedBy="blogPost", cascade={"persist"})
+     */
+	protected $tags;
+
+	/** … */
+}
+```
+
+#####Gestione dei valori nulli
+
+Quando un valore nullo viene passato a un campo OneToOne o ManyToOne, per esempio:
+
+```php
+$data = array(
+    'city' => null
+);
+```
+
+L'hydrator verifica se il metodo setCity() sull'entità consente valori Null e agisce di conseguenza:
+
+1. Se il metodo setCity () non consente valori Null cioè `function setCity(City $city)`, il null viene silenziosamente ignorato allora non verrà idratato.
+2. Se il metodo setCity () consente valori Null cioè `function setCity(City $city = null)`, sarà idratato il valore null.
