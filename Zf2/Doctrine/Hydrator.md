@@ -7,7 +7,7 @@ Gli hydrators sono semplici oggetti che permettono di convertire una matrice di 
 
 ####Creare un hydrator
 
-Per creare un Doctrine Hydrator abbimo bisogno soltanto di una cosa: un object manager (chiamato anche Entity Manager in Doctrine ORM)
+Per creare un Hydrator Doctrine abbimo bisogno soltanto di una cosa: un object manager (chiamato anche Entity Manager in Doctrine ORM)
 
 ```php
 use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
@@ -56,7 +56,7 @@ class City
 }
 ```
 
-Ora andiamo ad usare il Doctrine hydrator
+Ora andiamo ad usare il hydrator Doctrine
 
 ```php
 use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
@@ -559,3 +559,113 @@ L'hydrator verifica se il metodo setCity() sull'entità consente valori Null e a
 
 1. Se il metodo setCity () non consente valori Null cioè `function setCity(City $city)`, il null viene silenziosamente ignorato allora non verrà idratato.
 2. Se il metodo setCity () consente valori Null cioè `function setCity(City $city = null)`, sarà idratato il valore null.
+
+### Collections strategy
+
+Di default, le collezione di associazione avranno una strategia collegata che sarà chiamata durante la fase di idratamento (hydrating non so bene come tradurlo in IT) ed estrazione. Tutte queste strategie estendono dalla classe 
+`DoctrineModule\Stdlib\Hydrator\Strategy\AbstractCollectionStrategy`.
+
+DoctrineModule fornisce due tipi di strategie:
+
+1. `DoctrineModule\Stdlib\Hydrator\Strategy\AllowRemoveByValue`: questa è la strategia di default, e rimuove i vecchi elementi che non sono nella nuova collezione.
+2. `DoctrineModule\Stdlib\Hydrator\Strategy\AllowRemoveByReference`: questa è la strategia di default (in caso di settaggio byReference), e rimuove i vecchi elementi che non sono nella nuova collezionene.
+3. `DoctrineModule\Stdlib\Hydrator\Strategy\DisallowRemoveByValue`: questa strategia non elimina i vecchi elementi, anche se questi non sono nella nuova collezione.
+4. `DoctrineModule\Stdlib\Hydrator\Strategy\DisallowRemoveByReference`: questa strategia non elimina i vecchi elementi, anche se questi non sono nella nuova collezione.
+
+Come conseguenza, quando usiamo `AllowRemove*`, dovremo definire sia l'adder (es. addTags) che il remover (es. removeTags).Mentre se usiamo la strategia `DisallowRemove*`, basterà definire l'adder, mentre il remover sarà opzionale (visto che gli elementi nono saranno mai rimossi).
+
+La seguente tabella mostra le differenze tra le due strategie:
+
+| Strategy | Initial collection | Submitted collection | Result |
+| -------- | ------------------ | -------------------- | ------ |
+| AllowRemove* | A, B  | B, C | B, C
+| DisallowRemove* | A, B  | B, C | A, B, C
+
+La differenza tra ByValue e ByReference è che quando si utilizzano strategie che finiscono per ByReference, Doctrine non si avvarrà 
+dell'API pubblica della vostra entità (adder e remover) - non avremo nemmeno bisogno di definire i metodi -. Gli elementi saranno direttamente aggiunti e rimossi dalla collezione.
+
+####Cambiare la strategia 
+
+Cambiare la strategia per le collezioni è piuttosto semplice.
+
+```php
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+use DoctrineModule\Stdlib\Hydrator\Strategy;
+
+$hydrator = new DoctrineHydrator($entityManager);
+$hydrator->addStrategy('tags', new Strategy\DisallowRemoveByValue());
+```
+
+Si noti che è possibile anche aggiungere le strategie sui campi. 
+
+
+###Per valore e per riferimento 
+
+Per impostazione predefinita, l'Hydrator Doctrine opera di valore. Ciò significa che l'hydrator accederà e modificherà le proprietà attraverso l'API pubblica delle nostre entità (vale a dire, con getter e setter). Tuttavia, è possibile ignorare questa comportamento a lavorare per riferimento (vale a dire che l'hydrator accederà alle proprietà attraverso la Reflection API, e quindi bypasserà qualsiasi logica eventualmente inclusa nei setter / getter).
+
+Per modificare il comportamento, basta passare il terzo parametro del costruttore come false:
+
+```php
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+
+$hydrator = new DoctrineHydrator($objectManager, false);
+```
+
+Per illustrare la differenza tra i due, facciamo una estrazione con la seguente entità:
+
+```php
+
+namespace Application\Entity;
+
+use Doctrine\ORM\Mapping as ORM;
+
+/**
+ * @ORM\Entity
+ */
+class SimpleEntity
+{
+    /**
+     * @ORM\Column(type="string")
+     */
+	protected $foo;
+
+	public function getFoo()
+	{
+		die();
+	}
+
+  	/** ... */
+}
+```
+
+Utilizziamo il metodo predefinito, per valore:
+
+```php
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+
+$hydrator = new DoctrineHydrator($objectManager);
+$object   = new SimpleEntity();
+$object->setFoo('bar');
+
+$data = $hydrator->extract($object);
+
+echo $data['foo']; // never executed, because the script was killed when getter was accessed
+```
+
+Come possiamo vedere qui, lhydrator usa l'API pubblica (getFoo) per recuperare il valore. 
+
+Tuttavia, se lo usiamo per riferimento:
+
+```php
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+
+$hydrator = new DoctrineHydrator($objectManager, false);
+$object   = new SimpleEntity();
+$object->setFoo('bar');
+
+$data = $hydrator->extract($object);
+
+echo $data['foo']; // prints 'bar'
+```
+
+Ora stampa "bar", il che mostra chiaramente che il getter non è stato chiamato.
