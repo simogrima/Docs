@@ -601,7 +601,7 @@ Si noti che è possibile anche aggiungere le strategie sui campi.
 
 ###Per valore e per riferimento 
 
-Per impostazione predefinita, l'Hydrator Doctrine opera di valore. Ciò significa che l'hydrator accederà e modificherà le proprietà attraverso l'API pubblica delle nostre entità (vale a dire, con getter e setter). Tuttavia, è possibile ignorare questa comportamento a lavorare per riferimento (vale a dire che l'hydrator accederà alle proprietà attraverso la Reflection API, e quindi bypasserà qualsiasi logica eventualmente inclusa nei setter / getter).
+Per impostazione predefinita, l'Hydrator Doctrine opera per valore. Ciò significa che l'hydrator accederà e modificherà le proprietà attraverso l'API pubblica delle nostre entità (vale a dire, con getter e setter). Tuttavia, è possibile ignorare questa comportamento a lavorare per riferimento (vale a dire che l'hydrator accederà alle proprietà attraverso la Reflection API, e quindi bypasserà qualsiasi logica eventualmente inclusa nei setter / getter).
 
 Per modificare il comportamento, basta passare il terzo parametro del costruttore come false:
 
@@ -669,3 +669,404 @@ echo $data['foo']; // prints 'bar'
 ```
 
 Ora stampa "bar", il che mostra chiaramente che il getter non è stato chiamato.
+
+###Un esempio completo utilizzando Zend\Form 
+
+Ora che abbiamo capito come funziona l'hydrator, vediamo come integrarlo nel componente Form di Zend Framework 2. 
+Abbiamo intenzione di utilizzare un semplice esempio con, ancora una volta, un'entità BlogPost ed una Tag. 
+
+####Le entità 
+
+Per prima cosa definiamo le (semplificate) entità:
+
+```php
+
+namespace Application\Entity;
+
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
+use Doctrine\ORM\Mapping as ORM;
+
+/**
+ * @ORM\Entity
+ */
+class BlogPost
+{
+	/**
+     * @ORM\Id
+     * @ORM\Column(type="integer")
+     * @ORM\GeneratedValue(strategy="AUTO")
+     */
+    protected $id;
+
+    /**
+     * @ORM\OneToMany(targetEntity="Application\Entity\Tag", mappedBy="blogPost", cascade={"persist"})
+     */
+	protected $tags;
+
+
+	/**
+	 * Never forget to initialize all your collections !
+	 */
+	public function __construct()
+	{
+		$this->tags = new ArrayCollection();
+	}
+
+	/**
+	 * @return integer
+	 */
+    public function getId()
+    {
+   		return $this->id;
+    }
+
+	/**
+	 * @param Collection $tags
+	 */
+	public function addTags(Collection $tags)
+	{
+		foreach ($tags as $tag) {
+			$tag->setBlogPost($this);
+			$this->tags->add($tag);
+		}
+	}
+
+	/**
+	 * @param Collection $tags
+	 */
+	public function removeTags(Collection $tags)
+	{
+		foreach ($tags as $tag) {
+			$tag->setBlogPost(null);
+			$this->tags->removeElement($tag);
+		}
+	}
+
+	/**
+	 * @return Collection
+	 */
+    public function getTags()
+    {
+    	return $this->tags;
+    }
+}
+```
+
+L'entità Tag:
+
+```php
+
+namespace Application\Entity;
+
+use Doctrine\ORM\Mapping as ORM;
+
+/**
+ * @ORM\Entity
+ */
+class Tag
+{
+	/**
+     * @ORM\Id
+     * @ORM\Column(type="integer")
+     * @ORM\GeneratedValue(strategy="AUTO")
+     */
+    protected $id;
+
+    /**
+     * @ORM\ManyToOne(targetEntity="Application\Entity\BlogPost", inversedBy="tags")
+     */
+	protected $blogPost;
+
+	/**
+	 * @ORM\Column(type="string")
+	 */
+	protected $name;
+
+
+	/**
+	 * Get the id
+
+	 * @return int
+	 */
+    public function getId()
+    {
+   		return $this->id;
+    }
+
+	/**
+	 * Allow null to remove association
+	 *
+	 * @param BlogPost $blogPost
+	 */
+	public function setBlogPost(BlogPost $blogPost = null)
+	{
+		$this->blogPost = $blogPost;
+	}
+
+	/**
+	 * @return BlogPost
+	 */
+    public function getBlogPost()
+    {
+    	return $this->blogPost;
+    }
+
+    /**
+     * @param string $name
+     */
+    public function setName($name)
+    {
+    	$this->name = $name;
+    }
+
+    /**
+     * @return string
+     */
+    public function getName()
+    {
+    	return $this->name;
+    }
+}
+```
+
+####I fieldsets 
+
+Ora dobbiamo creare due fieldsets che mapperanno tali entità. Con Zend Framework 2, è una buona pratica creare 
+un fieldset per ogni entità, al fine di poterli riutilizzare in molte forms. 
+
+Ecco il fieldset per il Tag. Si noti che in questo esempio, ho aggiunto un input nascosto il cui nome è "id". questo è 
+necessario per l'editing. La maggior parte del tempo, quando si crea il post sul blog per la prima volta, non esiste il tag, pertanto, l'id sarà vuoto. 
+Tuttavia, quando si modifica il post sul blog, tutti i tags già esistono sul DB, e quindi l'input nascosto "id" avrà un valore. Ciò consente di modificare il nome di un tag modificando un'entità Tag esistente senza creare un nuovo tag (e rimozione del vecchio).
+
+```php
+
+namespace Application\Form;
+
+use Application\Entity\Tag;
+use Doctrine\Common\Persistence\ObjectManager;
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+use Zend\Form\Fieldset;
+use Zend\InputFilter\InputFilterProviderInterface;
+
+class TagFieldset extends Fieldset implements InputFilterProviderInterface
+{
+    public function __construct(ObjectManager $objectManager)
+    {
+        parent::__construct('tag');
+
+        $this->setHydrator(new DoctrineHydrator($objectManager))
+             ->setObject(new Tag());
+
+		$this->add(array(
+			'type' => 'Zend\Form\Element\Hidden',
+			'name' => 'id'
+		));
+
+        $this->add(array(
+            'type'    => 'Zend\Form\Element\Text',
+            'name'    => 'name',
+            'options' => array(
+                'label' => 'Tag'
+            )
+        ));
+    }
+
+    public function getInputFilterSpecification()
+    {
+        return array(
+            'id' => array(
+            	'required' => false
+            ),
+
+            'name' => array(
+                'required' => true
+            )
+        );
+    }
+}
+```
+
+Ed il fieldset BlogPost:
+
+```php
+
+namespace Application\Form;
+
+use Application\Entity\BlogPost;
+use Doctrine\Common\Persistence\ObjectManager;
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+use Zend\Form\Fieldset;
+use Zend\InputFilter\InputFilterProviderInterface;
+
+class BlogPostFieldset extends Fieldset implements InputFilterProviderInterface
+{
+    public function __construct(ObjectManager $objectManager)
+    {
+        parent::__construct('blog-post');
+
+        $this->setHydrator(new DoctrineHydrator($objectManager))
+             ->setObject(new BlogPost());
+
+		$this->add(array(
+			'type' => 'Zend\Form\Element\Text',
+			'name' => 'title'
+		));
+
+		$tagFieldset = new TagFieldset($objectManager);
+        $this->add(array(
+            'type'    => 'Zend\Form\Element\Collection',
+            'name'    => 'tags',
+            'options' => array(
+            	'count'           => 2,
+                'target_element' => $tagFieldset
+            )
+        ));
+    }
+
+    public function getInputFilterSpecification()
+    {
+        return array(
+            'title' => array(
+            	'required' => true
+            ),
+        );
+    }
+}
+```
+
+Semplice e facile. Il blog post è solo un semplice fieldset con un  elemento di tipo ``Zend\Form\Element\Collection`` che rappresenta l'associazione ManyToOne. 
+
+####Il modulo 
+
+Ora che abbiamo creato il nostro fieldset, creeremo due moduli: un modulo per la creazione ed un modulo per l'aggiornamento. 
+Il compito della form è quello di fare da collante tra i fieldsets. In questo semplice esempio, entrambe le forms sono esattamente uguali, 
+ma in una vera e propria applicazione, è possibile modificare questo comportamento cambiando i gruppo di convalida (per esempio, 
+si  potrebbe decidere di non consentire all'utente di modificare il titolo del post sul blog durante l'aggiornamento). 
+
+Ecco pa fiorm di creazione:
+
+```php
+namespace Application\Form;
+
+use Doctrine\Common\Persistence\ObjectManager;
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+use Zend\Form\Form;
+
+class CreateBlogPostForm extends Form
+{
+    public function __construct(ObjectManager $objectManager)
+    {
+        parent::__construct('create-blog-post-form');
+
+		// The form will hydrate an object of type "BlogPost"
+        $this->setHydrator(new DoctrineHydrator($objectManager));
+
+        // Add the user fieldset, and set it as the base fieldset
+        $blogPostFieldset = new BlogPostFieldset($objectManager);
+        $blogPostFieldset->setUseAsBaseFieldset(true);
+        $this->add($blogPostFieldset);
+
+        // … add CSRF and submit elements …
+
+        // Optionally set your validation group here
+    }
+}
+```
+
+E quella di aggiornamento:
+
+```php
+namespace Application\Form;
+
+use Doctrine\Common\Persistence\ObjectManager;
+use DoctrineModule\Stdlib\Hydrator\DoctrineObject as DoctrineHydrator;
+use Zend\Form\Form;
+
+class UpdateBlogPostForm extends Form
+{
+    public function __construct(ObjectManager $objectManager)
+    {
+        parent::__construct('update-blog-post-form');
+
+		// The form will hydrate an object of type "BlogPost"
+        $this->setHydrator(new DoctrineHydrator($objectManager));
+
+        // Add the user fieldset, and set it as the base fieldset
+        $blogPostFieldset = new BlogPostFieldset($objectManager);
+        $blogPostFieldset->setUseAsBaseFieldset(true);
+        $this->add($blogPostFieldset);
+
+        // … add CSRF and submit elements …
+
+        // Optionally set your validation group here
+    }
+}
+```
+
+####I controllers
+
+Ora abbiamo tutto. Creiamo i controllers. 
+
+#####Creazione 
+
+Nella createAction, creeremo un nuovo BlogPost e tutti i tags associati. Di conseguenza, gli IDs nascosti per i tags saranno da vuoti. 
+
+Ecco l'azione per creare un nuovo post sul blog:
+
+```php
+
+public function createAction()
+{
+    // Get your ObjectManager from the ServiceManager
+    $objectManager = $this->getServiceLocator()->get('Doctrine\ORM\EntityManager');
+
+	// Create the form and inject the ObjectManager
+	$form = new CreateBlogPostForm($objectManager);
+
+	// Create a new, empty entity and bind it to the form
+	$blogPost = new BlogPost();
+	$form->bind($blogPost);
+
+	if ($this->request->isPost()) {
+		$form->setData($this->request->getPost());
+
+		if ($form->isValid()) {
+			$objectManager->persist($blogPost);
+			$objectManager->flush();
+		}
+	}
+
+	return array('form' => $form);
+}
+```
+
+Il modulo di aggiornamento è simile, qui otterremo il post dal database invece di creare uno vuoto:
+
+```php
+
+public function editAction()
+{
+    // Get your ObjectManager from the ServiceManager
+    $objectManager = $this->getServiceLocator()->get('Doctrine\ORM\EntityManager');
+
+	// Create the form and inject the ObjectManager
+	$form = new UpdateBlogPostForm($objectManager);
+
+	// Create a new, empty entity and bind it to the form
+	$blogPost = $this->userService->get($this->params('blogPost_id'));
+	$form->bind($blogPost);
+
+	if ($this->request->isPost()) {
+		$form->setData($this->request->getPost());
+
+		if ($form->isValid()) {
+		    // Save the changes
+		    $objectManager->flush();
+		}
+	}
+
+	return array('form' => $form);
+}
+```
+
